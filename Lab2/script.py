@@ -28,19 +28,39 @@ class MTU:
         self.size_headers: int = Config.size_ip + Config.size_icmp
         self.host: str = socket.gethostbyname(source)
         self.args = args
+        self.count_try_pings = 5
         if args.show:
             logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
             logging.getLogger().setLevel(logging.INFO)
+        
+        if not self.check_ICMP_available():
+            raise ValueError("ICMP isn't available, please, fix it on your machine.")
+
 
     def request(self, packet_size: int) -> bool:
         res = icmplib.ping(self.host,
                                interval=self.args.interval,
                                timeout=self.args.timeout,
                                count=self.args.pings,
-                               payload_size=packet_size-28)
+                               payload_size=packet_size - self.size_headers)
         logging.info(f"\n----------\nSended {packet_size} bytes. \nAfter ping:\nLoss: {res.packet_loss}\nReceived: {res.packets_received}\n----------")
         return res.is_alive
+    
+
+    def check_ICMP_available(self) -> bool:
+        # если можно сделать ping на google.com и все ок, то скорее всего ICMP доступен извне,
+        # как будто бы, в linux можно проверить файл /proc/sys/net/ipv4/icmp_echo_ignore_all
+        # но это не универсально для всех ОС
+        # сделаю пока такое: делаем по 5 пингов на google.com, yandex.ru и если хоть 1 ок, значит, с ICMP все ок
+        for _ in range(self.count_try_pings):
+            res = icmplib.ping("google.com", count=1)
+            if res.is_alive:
+                return True
+            res = icmplib.ping("yandex.ru", count=1)
+            if res.is_alive:
+                return True
+        return False
     
 
     def calculate(self) -> int:
@@ -56,7 +76,8 @@ class MTU:
                 left = middle
             else:
                 right = middle
-        
+        if left == self.args.minsize - 1:
+            raise ValueError("Host is unreachable, its impossible to send useful payload.")
         return left
 
 
@@ -80,6 +101,10 @@ def main():
     if args.interval < 0:
         print("Wrong value in interval, please try with value >= 0")
         exit(4)
+
+    if args.minsize > args.maxsize:
+        print("Min size of packet > max size of packet, try again with valid parameters, should be: minsize <= maxsize")
+        exit(5)
     ###
 
     try:
@@ -87,6 +112,8 @@ def main():
         print(f"MTU was found successfully for host {args.target}, value is {res}")
     except socket.gaierror as e:
         print(f"Error in parameter 'target': wrong IP or hostname.\nRequired correct IP or hostname, try again. \nError: {str(e)}")
+    except ValueError as e:
+        print(f"{str(e)}")
     except Exception as e:
         print(f"Error in finding MTU process: {str(e)}.\nTry again later or with another parameters.")
 
